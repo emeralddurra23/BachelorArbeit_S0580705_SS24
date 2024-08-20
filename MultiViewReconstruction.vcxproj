@@ -87,6 +87,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="MeshAnalyzer.cpp" />
     <ClCompile Include="MultiViewReconstruction.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="moc_MainWindow.cpp" />
@@ -100,6 +101,9 @@
       <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Performing MOC on %(Filename).h</Message>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(ProjectDir)moc_%(Filename).cpp;%(Outputs)</Outputs>
     </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="MeshAnalyzer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

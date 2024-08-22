@@ -23,14 +23,13 @@ public:
 
 public slots:
 	void processFrames();
-
 	void calibrate();
 	void performCalibration();
 	void saveCalibration();
 	void loadCalibration();
-
 	void startReconstruction();
 	void stopReconstruction();
+	
 
 private:
 	std::vector<QLabel*> m_imgLabel;
@@ -57,6 +56,7 @@ private:
 
 	RecFusion::Reconstruction* m_rec;
 	RecFusion::SensorManager* m_sensorManager;
+	void postRefineMesh(RecFusion::Mesh& mesh);
 };
 
 #endif

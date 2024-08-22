@@ -252,7 +252,7 @@ void MainWindow::performCalibration()
 		//
 		//// Transformation from first marker coordinate system to calibration coordinate system (move 6 mm in z-direction to the center of the
 		///board). Matrix is column-major-order.
-		// double T1_[] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -6, 1 };
+		// do uble T1_[] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -6, 1 };
 		// Mat4 T1(T1_);
 		// calib.setMarker(400, 190, &T1);
 
@@ -423,6 +423,81 @@ void MainWindow::startReconstruction()
 	m_reconstruct = true;
 }
 
+void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
+{
+	std::stringstream analysisReport;
+
+	// Step 2.1: Analyze the mesh
+	int initialVertexCount = mesh.vertexCount();
+	int initialTriangleCount = mesh.triangleCount();
+	bool isManifold = mesh.isManifold();
+
+	analysisReport << "Initial mesh stats:" << std::endl;
+	analysisReport << "Vertices: " << initialVertexCount << std::endl;
+	analysisReport << "Triangles: " << initialTriangleCount << std::endl;
+	analysisReport << "Is manifold: " << (isManifold ? "Yes" : "No") << std::endl;
+
+	// Step 2.2: Clean the mesh
+	double minComponentArea = 10.0;  // Adjust as needed
+	double maxComponentArea = 1000000.0;  // Adjust as needed
+	if (mesh.clean(minComponentArea, maxComponentArea))
+	{
+		analysisReport << "Mesh cleaned. Removed components with area between "
+			<< minComponentArea << " and " << maxComponentArea << std::endl;
+	}
+	else
+	{
+		analysisReport << "Failed to clean the mesh." << std::endl;
+	}
+
+	// Step 2.3: Smooth the mesh
+	int smoothIterations = 2;  // Adjust as needed
+	if (mesh.smooth(smoothIterations))
+	{
+		analysisReport << "Mesh smoothed with " << smoothIterations << " iterations." << std::endl;
+	}
+	else
+	{
+		analysisReport << "Failed to smooth the mesh." << std::endl;
+	}
+
+	// Step 2.4: Decimate the mesh
+	int minEdgeLength = 2;  // Adjust as needed
+	int maxEdgeLength = 10;  // Adjust as needed
+	bool preserveColors = true;
+	if (mesh.decimate(minEdgeLength, maxEdgeLength, preserveColors))
+	{
+		analysisReport << "Mesh decimated with min edge length " << minEdgeLength
+			<< " and max edge length " << maxEdgeLength << std::endl;
+	}
+	else
+	{
+		analysisReport << "Failed to decimate the mesh." << std::endl;
+	}
+
+	// Step 2.5: Fill holes
+	if (mesh.fillHoles())
+	{
+		analysisReport << "Holes in the mesh filled." << std::endl;
+	}
+	else
+	{
+		analysisReport << "Failed to fill holes in the mesh." << std::endl;
+	}
+
+	// Step 2.6: Final analysis
+	int finalVertexCount = mesh.vertexCount();
+	int finalTriangleCount = mesh.triangleCount();
+	bool finalIsManifold = mesh.isManifold();
+
+	analysisReport << "Final mesh stats:" << std::endl;
+	analysisReport << "Vertices: " << finalVertexCount << std::endl;
+	analysisReport << "Triangles: " << finalTriangleCount << std::endl;
+	analysisReport << "Is manifold: " << (finalIsManifold ? "Yes" : "No") << std::endl;
+
+	// Step 2.7: Display the analysis report
+	QMessageBox::information(this, "Mesh Post-Refinement Analysis", QString::fromStdString(analysisReport.str()));
+}
 
 void MainWindow::stopReconstruction()
 {
@@ -443,11 +518,12 @@ void MainWindow::stopReconstruction()
 		std::cout << "Couldn't retrieve mesh" << std::endl;
 		return;
 	}
+	postRefineMesh(mesh);
 
 	std::cout << "Reconstructed mesh (" << mesh.vertexCount() << " vertices, " << mesh.triangleCount() << " triangles)" << std::endl;
 
 	// Save mesh to file
-	ok = mesh.save("mesh.ply", Mesh::PLY); //False, wegen Licenz
+	ok = mesh.save("refined_mesh.ply", Mesh::PLY); //False, wegen Licenz
 	if (ok)
 		std::cout << "Saved mesh as PLY (" << mesh.vertexCount() << " vertices, " << mesh.triangleCount() << " triangles)" << std::endl;
 
@@ -457,6 +533,8 @@ void MainWindow::stopReconstruction()
 	viewer.showMesh(&mesh);
 #endif
 }
+
+
 
 
 void MainWindow::processFrames()

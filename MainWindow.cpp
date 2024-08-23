@@ -58,14 +58,12 @@ MainWindow::MainWindow()
 	for (int i = 0; i < numSensors; i++)
 	{
 		m_imgLabel.push_back(new QLabel);
-		//m_recLabel.push_back(new QLabel);
-		m_reconstructedMeshLabels.push_back(new QLabel);
+		m_recLabel.push_back(new QLabel);
+		m_refinedLabel.push_back(new QLabel);
 
 		l->addWidget(m_imgLabel[i], 0, i);
-		//l->addWidget(m_recLabel[i], 1, i);
-		l->addWidget(m_reconstructedMeshLabels[i], 2, i);
-
-
+		l->addWidget(m_recLabel[i], 1, i);
+		l->addWidget(m_refinedLabel[i], 2, i);
 	}
 
 	QWidget* wt = new QWidget;
@@ -74,19 +72,6 @@ MainWindow::MainWindow()
 
 	resize(1024, 768);
 
-	// Resize all containers and initialize pointers to zero
-	m_recLabel.resize(numSensors);
-	for (int i = 0; i < numSensors; i++)
-	{
-		m_imgLabel.push_back(new QLabel);
-		l->addWidget(m_imgLabel[i], 0, i);
-
-		for (int j = 0; j < numSensors; j++)
-		{
-			m_recLabel[i].push_back(new QLabel);
-			l->addWidget(m_recLabel[i][j], 1, j);
-		}
-	}
 
 	m_colorImg.resize(numSensors, 0);
 	m_depthImg.resize(numSensors, 0);
@@ -127,15 +112,9 @@ MainWindow::MainWindow()
 			// Create color and depth images
 			m_colorImg[i] = new ColorImage(cw, ch);
 			m_depthImg[i] = new DepthImage(dw, dh);
-			
-			for (int i = 0; i < numSensors; ++i)
-			{
-				m_sceneImg[i].resize(numSensors);
-				for (int j = 0; j < numSensors; ++j)
-				{
-					m_sceneImg[i][j] = new RecFusion::ColorImage(dw, dh, 4);
-				}
-			}
+			m_sceneImg[i] = new RecFusion::ColorImage(dw, dh, 4);
+	
+	
 			m_calibImgColor[i] = new ColorImage(cw, ch);
 			m_calibImgDepth[i] = new DepthImage(dw, dh);
 
@@ -213,13 +192,7 @@ MainWindow::~MainWindow()
 		// Delete all allocated data
 		delete m_colorImg[i];
 		delete m_depthImg[i];
-		for (auto& row : m_sceneImg)
-		{
-			for (auto& img : row)
-			{
-				delete img;
-			}
-		}
+		delete m_sceneImg[i];
 		delete m_calibImgColor[i];
 		delete m_calibImgDepth[i];
 	}
@@ -565,6 +538,10 @@ void MainWindow::stopReconstruction()
 #endif
 }
 
+
+//After some test it is concluded that, the RecFusion SDK didn't support a Multi-Perspective Render of a 3D Image, 
+//therefore, the following method won't be used, there will be only 1 Perspective from Camera 1
+/*
 QImage MainWindow::renderMeshFromCamera(int fromCameraIndex, int toCameraIndex)
 {
 	if (!m_sceneImg[fromCameraIndex][fromCameraIndex])
@@ -585,7 +562,6 @@ QImage MainWindow::renderMeshFromCamera(int fromCameraIndex, int toCameraIndex)
 	}
 	return image;
 }
-
 RecFusion::Mat4 MainWindow::computeRelativeTransform(int fromCameraIndex, int toCameraIndex)
 {
 	RecFusion::Mat4 fromWorldToCamera = m_sensorT[fromCameraIndex].inverse();
@@ -594,7 +570,6 @@ RecFusion::Mat4 MainWindow::computeRelativeTransform(int fromCameraIndex, int to
 	// Compute the relative transform
 	return toWorldToCamera * m_sensorT[fromCameraIndex];
 }
-
 RecFusion::Vec3 MainWindow::transformPoint(const RecFusion::Mat4& transform, const RecFusion::Vec3& point)
 {
 	RecFusion::Vec3 transformedPoint(0,0,0);
@@ -622,8 +597,6 @@ RecFusion::Vec3 MainWindow::transformPoint(const RecFusion::Mat4& transform, con
 
 	return transformedPoint;
 }
-
-
 void MainWindow::applyTransformation(QImage& image, const RecFusion::Mat4& transform, const RecFusion::DepthImage* depthImage)
 {
 	int width = image.width();
@@ -667,7 +640,7 @@ void MainWindow::applyTransformation(QImage& image, const RecFusion::Mat4& trans
 
 	image = transformedImage;
 }
-
+*/
 
 
 
@@ -700,18 +673,15 @@ void MainWindow::processFrames()
 		{
 			// Add frame to reconstruction
 			bool status;
-			bool ret = m_rec->addFrame(i, *m_depthImg[i], *m_colorImg[i], &status, m_sceneImg[i][i], 0, &m_sensorT[i]);
+			bool ret = m_rec->addFrame(i, *m_depthImg[i], *m_colorImg[i], &status, m_sceneImg[i], 0, &m_sensorT[i]);
 			if (ret && status)
 			{
 				// Display rendering of current reconstruction when tracking succeeded
-				for (int j = 0; j < m_sensor.size(); ++j)
-				{
-					//QImage image(m_sceneImg[i][i]->data(), dw, dh, QImage::Format_RGBA8888);
-					QImage reconstructedImage = renderMeshFromCamera(i, j);
-					m_recLabel[i][j]->setPixmap(QPixmap::fromImage(reconstructedImage).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));//CHECK THIS
-				}
-				////For later
-				//QImage meshImage = renderMeshFromCamera(i);
+				QImage image(m_sceneImg[i]->data(), dw, dh, QImage::Format_RGBA8888);
+				//QImage reconstructedImage = renderMeshFromCamera(i, j);
+				m_recLabel[i]->setPixmap(QPixmap::fromImage(image).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));//CHECK THIS
+							//For later
+				//QImage meshImage()
 				//m_reconstructedMeshLabels[i]->setPixmap(QPixmap::fromImage(meshImage).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
 			
 			}

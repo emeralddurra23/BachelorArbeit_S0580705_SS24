@@ -33,18 +33,16 @@ public slots:
 
 private:
 	std::vector<QLabel*> m_imgLabel;
-	std::vector<std::vector<QLabel*>> m_recLabel;
-	std::vector<QLabel*> m_reconstructedMeshLabels;
+	std::vector<QLabel*> m_recLabel;
+	std::vector<QLabel*> m_refinedLabel;
 	QMessageBox* m_calibMessageBox;
 	QTimer* m_timer;
-	QImage renderMeshToImage(const RecFusion::Mesh& mesh);
 	QImage renderMeshFromCamera(int cameraIndex, int toCameraIndex);
 	std::vector<RecFusion::Sensor*> m_sensor;
 
 	std::vector<RecFusion::ColorImage*> m_colorImg;
 	std::vector<RecFusion::DepthImage*> m_depthImg;
-	//std::vector<RecFusion::ColorImage*> m_sceneImg;
-	std::vector<std::vector<RecFusion::ColorImage*>> m_sceneImg;
+	std::vector<RecFusion::ColorImage*> m_sceneImg;
 	std::vector<RecFusion::ColorImage*> m_calibImgColor;
 	std::vector<RecFusion::DepthImage*> m_calibImgDepth;
 

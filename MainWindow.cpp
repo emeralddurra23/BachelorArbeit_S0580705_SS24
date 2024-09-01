@@ -1,5 +1,5 @@
 #include "MainWindow.h"
-
+#include "MeshAnalyzer.h"
 #include <QtCore/QCoreApplication>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QMutex>
@@ -28,20 +28,56 @@ MainWindow::MainWindow()
 	, m_calibMessageBox(0)
 	, m_reconstruct(false)
 	, m_calibrate(false)
+	, m_refine(false)
 	, m_rec(0)
 	, m_sensorManager(0)
+
 {
 	// Output RecFusion SDK version
 	std::cout << "Using RecFusionSDK " << RecFusionSDK::majorVersion() << "." << RecFusionSDK::minorVersion() << "." << RecFusionSDK::buildVersion()
 		<< std::endl;
 
 	// Activate license
-	bool ok = RecFusionSDK::activate("XXXXX-XXXXX-XXXXX-XXXXX-XXXXX");
-	if (!ok)
-		std::cout << "Invalid RecFusion license. Export will be disabled." << std::endl;
+	if (system("ping www.google.com")
+		== 0) {
+		std::cout << "Connected." << std::endl;
+	}
+	else {
+		std::cout << "Not Connected." << std::endl;
+	}
+
+	//Fange den Token ab
+	auto token = RecFusion::RecFusionSDK::token();
+
+	//Speichere den Token
+	std::ofstream file("Token.txt", std::ios::app);
+	if (file.is_open()) {
+		file << token << std::endl;
+		file.close();
+	}
+	else {
+		std::cerr << "Error writing to file .txt" << std::endl;
+	}
+	
+	std::string BasePath = "C:\\Users\\Logic Cube\\source\\repos\\dimension-recording-rework\\DimensionRecordingCPlusPlusTestConsole";
+	std::string KeyPath = BasePath + "\\" + "RecFusionLicenz.txt";
+	auto test = RecFusion::RecFusionSDK::validLicense();
+
+	auto buildversion = RecFusion::RecFusionSDK::buildVersion();
+	auto majorVersion = RecFusion::RecFusionSDK::majorVersion();
+	auto minorVersion = RecFusion::RecFusionSDK::minorVersion();
+	auto key = LoadFile(KeyPath.c_str());
+	//bool keyActivated = RecFusion::RecFusionSDK::activate(key.c_str());
+	bool keyActivated = RecFusionSDK::activate("FVULY-FLIRC-ZSMGE-HHBRC-GZIMG");
+
+	if (!keyActivated) {
+			std::cout << "Invalid RecFusion license. Export will be disabled." << std::endl;
+			throw std::exception("Invalid RecFusion license.");
+		}
+	else
+		std::cout << "RecFusion license Activated. Export will be enabled." << std::endl;
 
 	RecFusionSDK::init();
-
 	// Find available sensors
 	m_sensorManager = new RecFusion::SensorManager();
 	int numSensors = m_sensorManager->deviceCount();
@@ -72,7 +108,6 @@ MainWindow::MainWindow()
 
 	resize(1024, 768);
 
-
 	m_colorImg.resize(numSensors, 0);
 	m_depthImg.resize(numSensors, 0);
 	m_sceneImg.resize(numSensors);
@@ -88,11 +123,11 @@ MainWindow::MainWindow()
 	// Instantiate sensor objects
 	for (int i = 0; i < numSensors; i++)
 		m_sensor[i] = m_sensorManager->sensor(i);
-
+	bool ok;
 	// Open sensors
 	for (int i = 0; i < numSensors; i++)
 	{
-		ok = m_sensor[i]->open();
+		 ok = m_sensor[i]->open();
 		if (!ok)
 		{
 			QMessageBox::warning(this, "Initialization", "Couldn't open sensor #" + QString::number(i + 1) + ". Exiting.");
@@ -179,7 +214,21 @@ MainWindow::MainWindow()
 	connect(m_timer, SIGNAL(timeout()), this, SLOT(processFrames()));
 	m_timer->start(50);
 }
+std::string MainWindow::LoadFile(const char* Path)
+{
+	std::ifstream fileStream(Path);
 
+	if (fileStream.is_open()) {
+		std::string fileContents;
+		std::getline(fileStream, fileContents, '\0');
+		fileStream.close();
+		return fileContents;
+	}
+	else {
+		std::cerr << "Error: Unable to open file: " << Path << std::endl;
+		return "";
+	}
+}
 
 MainWindow::~MainWindow()
 {
@@ -430,8 +479,9 @@ void MainWindow::startReconstruction()
 void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 {
 	std::stringstream analysisReport;
+	m_refine = true;
 
-	// Step 2.1: Analyze the mesh
+	// Step 1: Analyze the mesh
 	int initialVertexCount = mesh.vertexCount();
 	int initialTriangleCount = mesh.triangleCount();
 	bool isManifold = mesh.isManifold();
@@ -441,9 +491,9 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 	analysisReport << "Triangles: " << initialTriangleCount << std::endl;
 	analysisReport << "Is manifold: " << (isManifold ? "Yes" : "No") << std::endl;
 
-	// Step 2.2: Clean the mesh
-	double minComponentArea = 10.0;  // Adjust as needed
-	double maxComponentArea = 1000000.0;  // Adjust as needed
+	// Step 2: Clean the mesh
+	double minComponentArea = 10.0;  
+	double maxComponentArea = 1000000.0;  
 	if (mesh.clean(minComponentArea, maxComponentArea))
 	{
 		analysisReport << "Mesh cleaned. Removed components with area between "
@@ -454,8 +504,8 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to clean the mesh." << std::endl;
 	}
 
-	// Step 2.3: Smooth the mesh
-	int smoothIterations = 2;  // Adjust as needed
+	// Step 3: Smooth the mesh
+	int smoothIterations = 2;
 	if (mesh.smooth(smoothIterations))
 	{
 		analysisReport << "Mesh smoothed with " << smoothIterations << " iterations." << std::endl;
@@ -465,9 +515,9 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to smooth the mesh." << std::endl;
 	}
 
-	// Step 2.4: Decimate the mesh
-	int minEdgeLength = 2;  // Adjust as needed
-	int maxEdgeLength = 10;  // Adjust as needed
+	// Step 4: Decimate the mesh
+	int minEdgeLength = 2;  
+	int maxEdgeLength = 10; 
 	bool preserveColors = true;
 	if (mesh.decimate(minEdgeLength, maxEdgeLength, preserveColors))
 	{
@@ -479,25 +529,73 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to decimate the mesh." << std::endl;
 	}
 
-	// Step 2.5: Fill holes
-	if (mesh.fillHoles())
+	// Step 5: Fill holes
+	
+	std::pair<std::map<std::pair<int, int>, int>, std::map<std::pair<int, int>, int>> initialResult = MeshAnalyzer::countBoundaryEdges(mesh);
+	std::map<std::pair<int, int>, int> BoundaryEdges = initialResult.first;
+	std::map<std::pair<int, int>, int> Edges = initialResult.second;
+	int initialBoundaryEdges = static_cast<int>(BoundaryEdges.size());
+	int initialEdges = static_cast<int>(Edges.size());
+	//double initialHoleArea = MeshAnalyzer::calculateHoleArea(mesh, BoundaryEdges);
+	analysisReport << "Initial Boundary Edges: " << initialBoundaryEdges << std::endl;
+	//analysisReport << "Initial Hole Area: " << initialHoleArea << std::endl;
+	if (MeshAnalyzer::needsHoleFilling(mesh, 0.1, initialBoundaryEdges, initialEdges)) //0.1 - 0.5 laut Attene, M., Campen, M., & Kobbelt, L. (2013). Polygon mesh repairing: An application perspective. ACM Computing Surveys (CSUR),
 	{
-		analysisReport << "Holes in the mesh filled." << std::endl;
+		// Fill holes in the mesh
+		if (mesh.fillHoles())
+		{
+			analysisReport << "Holes in the mesh filled." << std::endl;
+			// Analyze the mesh after filling holes
+			std::pair<std::map<std::pair<int, int>, int>, std::map<std::pair<int, int>, int>> Finalresult = MeshAnalyzer::countBoundaryEdges(mesh);
+			std::map<std::pair<int, int>, int> finalBoundaryEdges = Finalresult.first;
+			auto finalBoundaryEdgesCount = static_cast<int>(BoundaryEdges.size());
+			//auto finalHoleAreaCount = MeshAnalyzer::calculateHoleArea(mesh, BoundaryEdges);
+
+			analysisReport << "Final Boundary Edges: " << finalBoundaryEdgesCount << std::endl;
+			//analysisReport << "Final Hole Area: " << finalHoleAreaCount << std::endl;
+
+			analysisReport << "Boundary Edges Reduced By: " << (initialBoundaryEdges - finalBoundaryEdgesCount) << std::endl;
+			//analysisReport << "Hole Area Reduced By: " << (initialHoleArea - finalHoleAreaCount) << std::endl;
+		}
+		else
+		{
+			analysisReport << "Failed to fill holes in the mesh." << std::endl;
+		}
+	}
+	//Step 6: removeBoundaryFaces
+	if (mesh.removeBoundaryFaces(3))
+	{
+		analysisReport << "Boundary Faces is succesfully removed from the mesh" << std::endl;
 	}
 	else
 	{
-		analysisReport << "Failed to fill holes in the mesh." << std::endl;
+		analysisReport << "Failed to remove Boundary faces from the mesh." << std::endl;
+	}
+	
+
+	//Step 7: Apply textures
+	if (mesh.applyTexture())
+	{
+		analysisReport << "Texture is succesfully applied" << std::endl;
+	}
+	else
+	{
+		analysisReport << "Failed to apply Texture for the mesh." << std::endl;
 	}
 
-	// Step 2.6: Final analysis
+	//2.7: Final analysis
 	int finalVertexCount = mesh.vertexCount();
 	int finalTriangleCount = mesh.triangleCount();
 	bool finalIsManifold = mesh.isManifold();
+	bool finalRemovedBoundary = mesh.removeBoundaryFaces(3);
+	bool finalTextureIsApplied = mesh.applyTexture();
 
 	analysisReport << "Final mesh stats:" << std::endl;
 	analysisReport << "Vertices: " << finalVertexCount << std::endl;
 	analysisReport << "Triangles: " << finalTriangleCount << std::endl;
 	analysisReport << "Is manifold: " << (finalIsManifold ? "Yes" : "No") << std::endl;
+	analysisReport << "Boundary Faces removed?: " << (finalTextureIsApplied ? "Yes" : "No") << std::endl;
+	analysisReport << "Is texture applied: " << (finalTextureIsApplied ? "Yes" : "No") << std::endl;
 
 	// Step 2.7: Display the analysis report
 	QMessageBox::information(this, "Mesh Post-Refinement Analysis", QString::fromStdString(analysisReport.str()));
@@ -514,6 +612,7 @@ void MainWindow::stopReconstruction()
 	Mesh mesh;
 	bool ok = m_rec->getMesh(&mesh);
 
+	
 	// Delete reconstruction object
 	delete m_rec;
 	m_rec = 0;
@@ -522,14 +621,17 @@ void MainWindow::stopReconstruction()
 		std::cout << "Couldn't retrieve mesh" << std::endl;
 		return;
 	}
+	ok = mesh.save("C:\\Users\\Logic Cube\\source\\repos\\MultiViewReconstruction\\mesh.ply", Mesh::PLY); //Warte auf Licenz
+
 	postRefineMesh(mesh);
-
-	std::cout << "Reconstructed mesh (" << mesh.vertexCount() << " vertices, " << mesh.triangleCount() << " triangles)" << std::endl;
-
-	// Save mesh to file
-	ok = mesh.save("refined_mesh.ply", Mesh::PLY); //False, wegen Licenz
+	
+	std::cout << "Refined mesh (" << mesh.vertexCount() << " vertices, " << mesh.triangleCount() << " triangles)" << std::endl;
+	
+	//Save mesh to file (Uncomment if License is back)
+	ok = mesh.save("C:\\Users\\Logic Cube\\source\\repos\\MultiViewReconstruction\\refined_mesh.ply", Mesh::PLY); //Warte auf Licenz
 	if (ok)
 		std::cout << "Saved mesh as PLY (" << mesh.vertexCount() << " vertices, " << mesh.triangleCount() << " triangles)" << std::endl;
+	
 
 #ifndef _DEBUG
 	// Show mesh in viewer
@@ -538,9 +640,35 @@ void MainWindow::stopReconstruction()
 #endif
 }
 
+/*
+void MainWindow::renderRefinedMesh(const RecFusion::Mesh& mesh)
+{
+	// Create a new Reconstruction object for rendering
+	ReconstructionParams params(1);  // We only need one "sensor" for rendering
+	params.setImageSize(640, 480, 640, 480, 0);  // Set appropriate size
+	params.setIntrinsics(m_K[0], 0);  // Use intrinsics from the first sensor
+	params.setVolumeSize(Vec3(400, 400, 400));  // Set appropriate volume size
+	params.setVolumeResolution(Vec3i(256, 256, 256));  // Set appropriate resolution
+
+	Reconstruction renderer(params);
+
+	// Create a ColorImage to store the rendered result
+	ColorImage renderedImage(640, 480, 4);  // 4 channels for RGBA
+
+	// Render the mesh
+	Mat4 identity;  // Identity matrix for camera pose
+	renderer.renderMesh(mesh, renderedImage, identity);
+
+	// Display the rendered mesh
+	QImage qImage(renderedImage.data(), 640, 480, QImage::Format_RGBA8888);
+	m_refinedLabel->setPixmap(QPixmap::fromImage(qImage).scaled(640, 480, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+*/
+
 
 //After some test it is concluded that, the RecFusion SDK didn't support a Multi-Perspective Render of a 3D Image, 
-//therefore, the following method won't be used, there will be only 1 Perspective from Camera 1
+//therefore, the following method won't be used, there will be only 1 Perspective from Camera 1. 
+//Hopefully this bug can be resolved in the future, so the following method can be used.
 /*
 QImage MainWindow::renderMeshFromCamera(int fromCameraIndex, int toCameraIndex)
 {
@@ -642,8 +770,6 @@ void MainWindow::applyTransformation(QImage& image, const RecFusion::Mat4& trans
 }
 */
 
-
-
 void MainWindow::processFrames()
 {
 	for (int i = 0; i < m_sensor.size(); i++)
@@ -680,12 +806,18 @@ void MainWindow::processFrames()
 				QImage image(m_sceneImg[i]->data(), dw, dh, QImage::Format_RGBA8888);
 				//QImage reconstructedImage = renderMeshFromCamera(i, j);
 				m_recLabel[i]->setPixmap(QPixmap::fromImage(image).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));//CHECK THIS
-							//For later
-				//QImage meshImage()
-				//m_reconstructedMeshLabels[i]->setPixmap(QPixmap::fromImage(meshImage).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
-			
 			}
 		}
+		//else if (!m_reconstruct && m_refine)
+		//{ 
+		//	QImage refinedImage(m_sceneImg[i]->data(), dw, dh, QImage::Format_RGBA8888);
+		//	m_refinedLabel[i]->setPixmap(QPixmap::fromImage(refinedImage).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+		//	// Convert RecFusion::ColorImage to QImage
+		//	QImage qImage(renderedImage[i].data(), width, height, QImage::Format_RGBA8888);
+
+		//	// Display the rendered mesh in the third lane
+		//	m_refinedLabel->setPixmap(QPixmap::fromImage(qImage));
+		//}
 		else if (m_calibrate)
 		{
 			// Save calibration frame

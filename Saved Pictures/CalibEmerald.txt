@@ -1,0 +1,58 @@
+RecFusion::Calibration calib;
+calib.init(2); //Sensor-Paar
+calib.setMarker(100, 190); //Marker typ 100 in Größe 190
+RecFusion::Mat4 T_ref_inv; //Invers
+std::vector<RecFusion::Mat4> sensorT(numSensors, RecFusion::Mat4::Identity()); // Transformations relative zu reference sensor
+
+// Kalibrieren  jeden Sensor gegen den Referenzsensor
+for (int i = 1; i < numSensors; i++) {
+   	for (int r = 0; r < 4; r++)
+   	{
+   		for (int c = 0; c < 4; c++)
+   		{
+   			for (int i = 0; i < numSensors; i++)
+   				m_sensorT[i](r, c) = (r == c) ? 1 : 0; //Einheitsmatrix
+   		}
+   	}
+
+   	// Aufnahme eines einzigen Bildes von beiden Sensoren, Zeit 5 Sekunden
+   	if (!m_sensor[0]->readImage(*m_depthImg[0], *m_colorImg[0], 5000) ||
+   		!m_sensor[i]->readImage(*m_depthImg[i], *m_colorImg[i], 5000)) {
+   		BOOST_LOG_TRIVIAL(error) << "Failed to read image from sensors 0 and " << i;
+   		RecFusion::RecFusionSDK::deinit();
+   		return;
+   	}
+
+   	// Abrufen der Markerpose für den Referenzsensor
+   	if (i == 1)
+   	{
+   		RecFusion::Mat4 T_ref;
+   		if (!RecFusion::Calibration::getMarkerPose(100, 190, *m_colorImg[0], m_colorK[0], T_ref)) {
+   			BOOST_LOG_TRIVIAL(error) << "Failed to detect marker for reference sensor";
+   			RecFusion::RecFusionSDK::deinit();
+   			return;
+   		}
+   		T_ref_inv = T_ref.inverse();
+   	}
+
+// Abrufen von Marker-Pose für den aktuellen Sensor
+   	RecFusion::Mat4 T_current;
+   	if (!RecFusion::Calibration::getMarkerPose(100, 190, *m_colorImg[i], m_colorK[i], T_current)) {
+   		BOOST_LOG_TRIVIAL(error) << "Failed to detect marker for sensor " << i;
+   		RecFusion::RecFusionSDK::deinit();
+   		return;
+   	}
+
+//	Berechnung der Transformation in Bezug auf den Referenzsensor
+   	m_sensorT[i] = T_ref_inv * T_current;
+
+// Bilder einstellen und kalibrieren
+   	calib.setImage(0, *m_depthImg[0], *m_colorImg[0], m_K[0], m_colorK[0], &m_depthToColorT[0]);
+   	calib.setImage(i, *m_depthImg[i], *m_colorImg[i], m_K[i], m_colorK[i], &m_depthToColorT[i]);
+   	if (!calib.calibrate()) {
+   		BOOST_LOG_TRIVIAL(error) << "Calibration failed for sensors 0 and " << i;
+   		RecFusion::RecFusionSDK::deinit();
+   		return;
+   	}
+   	BOOST_LOG_TRIVIAL(info) << "Calibration successful for sensors 0 and " << i;
+}

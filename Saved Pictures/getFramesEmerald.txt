@@ -1,0 +1,100 @@
+
+			//Skippen die ersten 10 Frames zum Stabilisieren
+			for (int k = 0; k < FRAMES_TO_SKIP; k++)
+			{
+				if (!pipe->try_wait_for_frames(&set, MAX_FRAME_WAIT_TIME))
+				{
+					BOOST_LOG_TRIVIAL(info) << "Time Out, BagFile " << i << std::endl;
+				}
+			}
+
+			rs2::align align_to(RS2_STREAM_COLOR);
+
+			//Ekstraktion von Frame bis 24 Frames von jeder BagFile
+			while (frames_transmitted < FRAMES_EXPECTED)
+			{
+				if (!pipe->try_wait_for_frames(&set, MAX_FRAME_WAIT_TIME))
+				{
+					throw std::runtime_error("Keinen Frame erhalten vom Bagfile");
+				}
+				else {
+
+					// Aligned frames
+					rs2::frameset aligned_frames = align_to.process(set);
+					rs2::depth_frame aligned_depth_frame = aligned_frames.get_depth_frame();
+					rs2::video_frame aligned_color_frame = aligned_frames.get_color_frame();
+
+					int numRGB = aligned_frames.get_frame_number();
+					int numD = aligned_depth_frame.get_frame_number();
+
+					if (numRGB >= color_frames.size() || numD >= depth_frames.size())
+					{
+						std::cout << "Number of RGB Frames: " << numRGB << std::endl;
+						std::cout << "Number of Depth Frames: " << numD << std::endl;
+					}
+
+					color_frames.emplace_back(aligned_color_frame); //neue Innere Vektor für rgb frames
+					depth_frames.emplace_back(aligned_depth_frame); //neue Innere Vektor für tief frames
+
+
+					int depth_width = aligned_depth_frame.get_width();
+					int depth_height = aligned_depth_frame.get_height();
+
+					// Überprüfen der Speicherplatz für DepthImage
+					if (!depthImage || depthImage->width() != aligned_depth_frame.get_width() ||
+						depthImage->height() != aligned_depth_frame.get_height()) {
+						delete depthImage;
+						depthImage = new RecFusion::DepthImage(aligned_depth_frame.get_width(),
+							aligned_depth_frame.get_height());
+					}
+
+					//Pointers 
+					if (aligned_color_frame && aligned_depth_frame)
+					{
+						const uint8_t* color_data = (const uint8_t*)aligned_color_frame.get_data();
+						const unsigned short* depth_in = static_cast<const unsigned short*>(aligned_depth_frame.get_data());
+						std::unique_ptr<unsigned short> depth_out(new unsigned short[depth_width * depth_height]);
+
+						int	color_data_size = 1556383;//color_width * color_height * 3;   
+						int depth_data_size = depth_width * depth_height * 1;
+
+						//Copy RGB Data
+						for (int y = 0; y < color_data_size; y++)
+						{
+							colorImage->data()[y] = color_data[y];
+						}
+						// Scale and copy depth data
+						for (int z = 0; z < depth_data_size; z++) {
+							float depth_in_meters = depth_in[z] * depth_scale;// Konvertierung -> meters
+							uint16_t depth_in_millimeters = static_cast<uint16_t>(depth_in_meters * 1000.0f);
+							depthImage->data()[z] = std::min<float>(depth_in_millimeters, 65535);	// Konvertierung -> uint16_t range
+						}
+					}
+
+				}
+				m_reconstruct = true;
+
+				//Überprufen von AddFrame Funktionszustand
+				bool addedFrame = recon->addFrame(i, *depthImage, *colorImage, &m_reconstruct, imageScene, nullptr, &sensor_T); //RecFusion SDK ermittelt den skalierte Frames von Bagfiles
+				frames_transmitted++;
+				if (addedFrame = false)
+				{
+					std::cout << "Frames are not integerated from camera " << i << std::endl;
+				}
+				else
+				{
+					std::cout << frames_transmitted << " Frames are transmitted from Camera: " << i << std::endl;
+				}
+			}
+			std::cout << "All Frames are transmitted from Camera: " << i << std::endl;
+			pipe->stop();
+			delete depthImage;
+			depthImage = nullptr;
+			frames_transmitted = 0;
+
+		}
+		catch (const std::exception& e)
+		{
+			std::cerr << "Error processing bagfiles" << e.what() << std::endl;
+		}
+		std::cout << "Frames transmission completed" << std::endl;

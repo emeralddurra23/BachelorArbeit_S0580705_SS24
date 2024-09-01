@@ -7,6 +7,8 @@
 
 #include <mutex>
 
+#include <map>
+
 class QLabel;
 class QMessageBox;
 class QTimer;
@@ -57,11 +59,15 @@ private:
 
 	bool m_reconstruct;
 	bool m_calibrate;
-
+	bool m_refine;
+	//bool CheckInternet();
+	std::string LoadFile(const char* Path);
 	RecFusion::Reconstruction* m_rec;
 	RecFusion::SensorManager* m_sensorManager;
 	void postRefineMesh(RecFusion::Mesh& mesh);
 	void applyTransformation(QImage& image, const RecFusion::Mat4& transform, const RecFusion::DepthImage* depthImage);
+	void renderRefinedMesh(const RecFusion::Mesh& mesh);
+	
 };
 
 #endif

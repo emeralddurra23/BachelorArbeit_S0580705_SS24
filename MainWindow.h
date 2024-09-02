@@ -52,8 +52,8 @@ private:
 	std::vector<RecFusion::Mat3> m_colorK;
 	std::vector<RecFusion::Mat4> m_depthToColorT;
 	std::vector<RecFusion::Mat4> m_sensorT;
-	RecFusion::Mat4 computeRelativeTransform(int fromCameraIndex, int toCameraIndex);
-	RecFusion::Vec3 transformPoint(const RecFusion::Mat4& transform, const RecFusion::Vec3& point);
+	//RecFusion::Mat4 computeRelativeTransform(int fromCameraIndex, int toCameraIndex);
+	//RecFusion::Vec3 transformPoint(const RecFusion::Mat4& transform, const RecFusion::Vec3& point);
 	
 	std::vector<bool> m_calibImgValid;
 
@@ -65,8 +65,12 @@ private:
 	RecFusion::Reconstruction* m_rec;
 	RecFusion::SensorManager* m_sensorManager;
 	void postRefineMesh(RecFusion::Mesh& mesh);
-	void applyTransformation(QImage& image, const RecFusion::Mat4& transform, const RecFusion::DepthImage* depthImage);
-	void renderRefinedMesh(const RecFusion::Mesh& mesh);
+	std::vector<RecFusion::Vec3> GetKeyPoints(const RecFusion::Mesh& mesh);
+	void FilterMeshPlane(RecFusion::Mesh& mesh, double plane_factor);
+	RecFusion::Vec3 GetStandardizedCrossProduct(const RecFusion::Vec3& v1, const RecFusion::Vec3& v2);
+	void FilterMeshSides(RecFusion::Mesh* mesh, double sides);
+	//void applyTransformation(QImage& image, const RecFusion::Mat4& transform, const RecFusion::DepthImage* depthImage);
+	//void renderRefinedMesh(const RecFusion::Mesh& mesh);
 	
 };
 

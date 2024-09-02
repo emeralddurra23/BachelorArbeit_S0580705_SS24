@@ -4,6 +4,7 @@
 #include <algorithm> // For std::find
 #include <iostream>
 #include <map>
+#include <set>
 
 // Define edge as a pair of vertex indices
 struct Edge {
@@ -264,7 +265,8 @@ double MeshAnalyzer::calculateHoleArea(const RecFusion::Mesh& mesh, std::map<std
 {
     double totalHoleArea = 0.0;
     std::vector<std::vector<int>> holes;
-    std::map<std::pair<int, int>, int> visitedEdges;
+    //std::map<std::pair<int, int>, int> visitedEdges;
+    std::set<std::pair<int, int>> visitedEdges;
     std::vector<int> holeVertices;
 
     int startVertex = 0;
@@ -279,11 +281,15 @@ double MeshAnalyzer::calculateHoleArea(const RecFusion::Mesh& mesh, std::map<std
             
             startVertex = edge.first.first;
             currentVertex = edge.first.second;
+            holeVertices.clear();
             holeVertices.push_back(startVertex);
 
-            while (true) {
+            size_t maxIterations = mesh.vertexCount(); 
+            size_t iteration = 0;
+            while (iteration < maxIterations) {
                 holeVertices.push_back(currentVertex);
-                visitedEdges[{holeVertices[holeVertices.size() - 2], currentVertex}] = 1;
+                visitedEdges.insert({ holeVertices[holeVertices.size() - 2], currentVertex });
+                visitedEdges.insert({ currentVertex, holeVertices[holeVertices.size() - 2] }); // Add reverse edge
                 bool foundNextEdge = false;
                 // Find next vertex in the hole
                 for (const auto& nextEdge : BoundaryEdges) {
@@ -296,33 +302,57 @@ double MeshAnalyzer::calculateHoleArea(const RecFusion::Mesh& mesh, std::map<std
                 }
 
                 if(!foundNextEdge || holeVertices.size() > mesh.vertexCount()) {
-                    holeVertices.clear();
+                    //holeVertices.clear();
                     break;
                 }
+                iteration++;
             }
-                    /*if (nextEdge.first.first == currentVertex && nextEdge.first.second != holeVertices[holeVertices.size() - 2]) {
-                        currentVertex = nextEdge.first.second;
-                        break;
-                    }*/
+                    
         
             if (holeVertices.size() > 2 && currentVertex == startVertex) {
                 holes.push_back(std::move(holeVertices));
                 std::cout << "Number of holes detected: " << holes.back().size() << std::endl;
             }
-            holeVertices.clear();
+            //holeVertices.clear();
         }
     }
 
     // Calculate area for each hole
-    RecFusion::Mesh::Coordinate v0;
-    double holeArea = 0.0;
     for (const auto& hole : holes) {
-        v0 = mesh.vertex(hole[0]);
+        double holeArea = 0.0;
+        if (hole.size() < 3) continue;  // Skip invalid holes
+
+        RecFusion::Mesh::Coordinate v0 = mesh.vertex(hole[0]);
         for (size_t i = 1; i < hole.size() - 1; ++i) {
             RecFusion::Mesh::Coordinate v1 = mesh.vertex(hole[i]);
             RecFusion::Mesh::Coordinate v2 = mesh.vertex(hole[i + 1]);
-            holeArea += calculateTriangleArea(v0, v1, v2);
+            double triangleArea = calculateTriangleArea(v0, v1, v2);
+
+            // Check for invalid area
+            if (std::isnan(triangleArea) || std::isinf(triangleArea) || triangleArea < 0) {
+                std::cout << "Warning: Invalid triangle area detected. Skipping..." << std::endl;
+                continue;
+            }
+
+            // Check for potential overflow
+            if (holeArea > std::numeric_limits<double>::max() - triangleArea) {
+                std::cout << "Warning: Potential overflow detected. Capping hole area." << std::endl;
+                holeArea = std::numeric_limits<double>::max();
+                break;
+            }
+
+            holeArea += triangleArea;
         }
+
+        std::cout << "Individual hole area: " << holeArea << std::endl;
+
+        // Check for potential overflow again when adding to total
+        if (totalHoleArea > std::numeric_limits<double>::max() - holeArea) {
+            std::cout << "Warning: Potential overflow in total area. Capping total area." << std::endl;
+            totalHoleArea = std::numeric_limits<double>::max();
+            break;
+        }
+
         totalHoleArea += holeArea;
     }
 
@@ -354,7 +384,13 @@ double MeshAnalyzer::calculateTriangleArea(const RecFusion::Mesh::Coordinate& v1
         double b = distance(v2, v3);
         double c = distance(v3, v1);
         double s = (a + b + c) / 2.0;
-       return std::sqrt(s * (s - a) * (s - b) * (s - c));
+        double area = std::sqrt(std::max(0.0, s * (s - a) * (s - b) * (s - c)));
+        // Additional check for very small areas that might be due to precision errors
+        if (area < 1e-10) {
+            return 0.0;
+        }
+        return area;
+
 }
 
 //Calculate Euclidean distance between two points korrekt

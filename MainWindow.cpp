@@ -295,26 +295,6 @@ void MainWindow::performCalibration()
 		// Single-sided calibration
 		calib.setMarker(100, 190);
 
-		//// Two-sided calibration with a marker board of thickness 12 mm. The calibration coordinate system origin is in the middle of the board.
-
-		//// Transformation from the first marker coordinate system to the calibration coordinate system.
-		//// The z-Axis is always perpendicular to the marker surface pointing toward the viewer.
-		//// When placing the marker such that the marker id printed on the lower left of the marker
-		//// the x-axis extends from the center of the marker towards the bottom (where the marker id is printed),
-		//// the y-axis extends to the right, the origin of the marker coordinate system is at the center of the marker.
-		//
-		//// Transformation from first marker coordinate system to calibration coordinate system (move 6 mm in z-direction to the center of the
-		///board). Matrix is column-major-order.
-		// do uble T1_[] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -6, 1 };
-		// Mat4 T1(T1_);
-		// calib.setMarker(400, 190, &T1);
-
-		//// Transformation from second marker coordinate system to calibration coordinate system (rotate 180° around x-axis and move 6 mm in
-		///z-direction to the center of the board). Matrix is column-major-order.
-		// double T2_[] = { 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, -6, 1 };
-		// Mat4 T2(T2_);
-		// calib.setMarker(500, 190, &T2);
-
 		bool ok = false;
 
 		// Try to run calibration until it succeeds but at most 10 times
@@ -476,6 +456,117 @@ void MainWindow::startReconstruction()
 	m_reconstruct = true;
 }
 
+RecFusion::Vec3 MainWindow::GetStandardizedCrossProduct(const RecFusion::Vec3& v1, const RecFusion::Vec3& v2)
+{
+	RecFusion::Vec3 cross(
+		v1[1] * v2[2] - v1[2] * v2[1],
+		v1[2] * v2[0] - v1[0] * v2[2],
+		v1[0] * v2[1] - v1[1] * v2[0]
+	);
+
+	double length = std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+	if (length > 0) {
+		cross[0] /= length;
+		cross[1] /= length;
+		cross[2] /= length;
+	}
+
+	return cross;
+}
+
+void MainWindow::FilterMeshPlane(RecFusion::Mesh& mesh, double plane_factor)
+{
+	std::vector<RecFusion::Vec3> key_points = GetKeyPoints(mesh);
+
+	// Calculate mesh normal
+	RecFusion::Vec3 direction_1(key_points[0][0] - key_points[2][0],
+		key_points[0][1] - key_points[2][1],
+		key_points[0][2] - key_points[2][2]);
+	RecFusion::Vec3 direction_2(key_points[1][0] - key_points[3][0],
+		key_points[1][1] - key_points[3][1],
+		key_points[1][2] - key_points[3][2]);
+	RecFusion::Vec3 mesh_normal = GetStandardizedCrossProduct(direction_1, direction_2);
+
+	std::cout << "Mesh normal: X: " << mesh_normal[0] << ", Y: " << mesh_normal[1] << ", Z: " << mesh_normal[2] << std::endl;
+
+	RecFusion::Vec3 center_Cal = mesh.center();
+	RecFusion::Vec3 extent_Cal = mesh.extent();
+
+	const double min_ground = center_Cal[1] + (extent_Cal[1] / 2);
+	double max_ground = (key_points[0][1] >= key_points[1][1]) ? key_points[1][1] : key_points[0][1];
+
+	RecFusion::Vec3 mesh_center = mesh.center();
+	RecFusion::Vec3 mesh_extent = mesh.extent();
+
+	// Auto-correction logic
+	if (key_points[4][1] > min_ground) {
+		std::cout << "There is a point below the min corner" << std::endl;
+		double correction = max_ground - key_points[4][1];
+		if (std::abs(correction) <= 20) {
+			mesh_center[1] += correction;
+			mesh_extent[1] += correction;
+		}
+		std::cout << "Auto correction value: " << correction << std::endl;
+	}
+	else {
+		double correction = max_ground - min_ground;
+		if (std::abs(correction) <= 20) {
+			mesh_center[1] += correction;
+			mesh_extent[1] += correction;
+		}
+		std::cout << "Auto correction value: " << correction << std::endl;
+	}
+	
+	// Crop the mesh
+	std::cout << "Cutting the bottom of the mesh with factor " << plane_factor << std::endl;
+	mesh_center[1] -= plane_factor;
+	if (!mesh.crop(mesh_center, mesh_extent)) {
+		std::cerr << "Failed to cut at the bottom" << std::endl;
+		return;
+	}
+
+	// Print final mesh extent
+	RecFusion::Vec3 mesh_plane_final_extent = mesh.extent();
+	std::cout << "Final extent: X: " << mesh_plane_final_extent[0]
+		<< ", Y: " << mesh_plane_final_extent[1]
+		<< ", Z: " << mesh_plane_final_extent[2] << std::endl;
+}
+
+void MainWindow::FilterMeshSides(RecFusion::Mesh* mesh, double sides)
+{
+	try {
+		std::cout << "Cutting the sides of the mesh with factor " << sides << std::endl;
+
+		RecFusion::Vec3 mesh_center = mesh->center();
+		RecFusion::Vec3 mesh_extent = mesh->extent();
+
+		// Set new X and Z extents
+		mesh_extent[0] = sides;
+		mesh_extent[2] = sides;
+
+		if (!mesh->crop(mesh_center, mesh_extent)) {
+			std::cerr << "Failed to cut the sides" << std::endl;
+			return;
+		}
+
+		RecFusion::Vec3 mesh_sides_final_extent = mesh->extent();
+
+		if (std::isnan(mesh_sides_final_extent[0]) || std::isnan(mesh_sides_final_extent[1]) || std::isnan(mesh_sides_final_extent[2])) {
+			std::cerr << "Data could not be processed, aborting with sides value: " << sides << std::endl;
+			mesh = new RecFusion::Mesh();  
+			return;
+		}
+
+		std::cout << "Final values after side filtering:" << std::endl
+			<< "X: " << mesh_sides_final_extent[0] << std::endl
+			<< "Y: " << mesh_sides_final_extent[1] << std::endl
+			<< "Z: " << mesh_sides_final_extent[2] << std::endl;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Error in FilterMeshSides: " << e.what() << std::endl;
+		throw;
+	}
+}
 void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 {
 	std::stringstream analysisReport;
@@ -491,7 +582,17 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 	analysisReport << "Triangles: " << initialTriangleCount << std::endl;
 	analysisReport << "Is manifold: " << (isManifold ? "Yes" : "No") << std::endl;
 
-	// Step 2: Clean the mesh
+
+	//Step 2: Cut Plane 
+	double plane_factor = 20.0;
+	FilterMeshPlane(mesh, plane_factor);
+	double sides_factor = 200.0;
+	FilterMeshSides(&mesh, sides_factor);
+
+	analysisReport << "Plan is succesfully filtered" << std::endl;
+
+
+	// Step 3: Clean the mesh
 	double minComponentArea = 10.0;  
 	double maxComponentArea = 1000000.0;  
 	if (mesh.clean(minComponentArea, maxComponentArea))
@@ -504,8 +605,8 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to clean the mesh." << std::endl;
 	}
 
-	// Step 3: Smooth the mesh
-	int smoothIterations = 2;
+	// Step 4: Smooth the mesh
+	int smoothIterations = 1;
 	if (mesh.smooth(smoothIterations))
 	{
 		analysisReport << "Mesh smoothed with " << smoothIterations << " iterations." << std::endl;
@@ -515,7 +616,7 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to smooth the mesh." << std::endl;
 	}
 
-	// Step 4: Decimate the mesh
+	// Step 5: Decimate the mesh
 	int minEdgeLength = 2;  
 	int maxEdgeLength = 10; 
 	bool preserveColors = true;
@@ -529,43 +630,71 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to decimate the mesh." << std::endl;
 	}
 
-	// Step 5: Fill holes
-	
+	// Step 6: Fill holes
 	std::pair<std::map<std::pair<int, int>, int>, std::map<std::pair<int, int>, int>> initialResult = MeshAnalyzer::countBoundaryEdges(mesh);
 	std::map<std::pair<int, int>, int> BoundaryEdges = initialResult.first;
 	std::map<std::pair<int, int>, int> Edges = initialResult.second;
 	int initialBoundaryEdges = static_cast<int>(BoundaryEdges.size());
 	int initialEdges = static_cast<int>(Edges.size());
-	//double initialHoleArea = MeshAnalyzer::calculateHoleArea(mesh, BoundaryEdges);
+	double initialHoleArea = MeshAnalyzer::calculateHoleArea(mesh, BoundaryEdges);
 	analysisReport << "Initial Boundary Edges: " << initialBoundaryEdges << std::endl;
-	//analysisReport << "Initial Hole Area: " << initialHoleArea << std::endl;
+	analysisReport << "Initial Hole Area: " << initialHoleArea << std::endl;
+	std::cout << "Intiial" << mesh.vertexCount() << " vertices, Initial" << mesh.triangleCount() << " triangles)" << std::endl;
 	if (MeshAnalyzer::needsHoleFilling(mesh, 0.1, initialBoundaryEdges, initialEdges)) //0.1 - 0.5 laut Attene, M., Campen, M., & Kobbelt, L. (2013). Polygon mesh repairing: An application perspective. ACM Computing Surveys (CSUR),
 	{
-		// Fill holes in the mesh
+		// Fill holes iposn the mesh
 		if (mesh.fillHoles())
 		{
 			analysisReport << "Holes in the mesh filled." << std::endl;
+			
+			//Create new mesh from refined data
+			std::vector<Mesh::Coordinate> refinedVertices;
+			std::vector<Mesh::Triangle> refinedTriangles;
+			std::vector<Mesh::Color> refinedColors;
+
+			for (int i = 0; i < mesh.vertexCount(); ++i)
+			{
+				refinedVertices.push_back(mesh.vertex(i));
+				refinedColors.push_back(mesh.color(i));
+			}
+
+			for (int i = 0; i < mesh.triangleCount(); ++i)
+			{
+				refinedTriangles.push_back(mesh.triangle(i));
+			}
+			
+			Mesh* refinedMesh = Mesh::create(
+				refinedVertices.size(),
+				reinterpret_cast<const double*>(refinedVertices.data()),
+				refinedTriangles.size(),
+				reinterpret_cast<const int*>(refinedTriangles.data()),
+				reinterpret_cast<const double*>(refinedColors.data())
+			);
+			std::cout << "Intiial" << refinedMesh->vertexCount() << " vertices, Initial" << refinedMesh->triangleCount() << " triangles)" << std::endl;
+
+
 			// Analyze the mesh after filling holes
-			std::pair<std::map<std::pair<int, int>, int>, std::map<std::pair<int, int>, int>> Finalresult = MeshAnalyzer::countBoundaryEdges(mesh);
+			std::pair<std::map<std::pair<int, int>, int>, std::map<std::pair<int, int>, int>> Finalresult = MeshAnalyzer::countBoundaryEdges(*refinedMesh);
 			std::map<std::pair<int, int>, int> finalBoundaryEdges = Finalresult.first;
 			auto finalBoundaryEdgesCount = static_cast<int>(BoundaryEdges.size());
-			//auto finalHoleAreaCount = MeshAnalyzer::calculateHoleArea(mesh, BoundaryEdges);
+			auto finalHoleAreaCount = MeshAnalyzer::calculateHoleArea(*refinedMesh, BoundaryEdges);
 
 			analysisReport << "Final Boundary Edges: " << finalBoundaryEdgesCount << std::endl;
-			//analysisReport << "Final Hole Area: " << finalHoleAreaCount << std::endl;
+			analysisReport << "Final Hole Area: " << finalHoleAreaCount << std::endl;
 
 			analysisReport << "Boundary Edges Reduced By: " << (initialBoundaryEdges - finalBoundaryEdgesCount) << std::endl;
-			//analysisReport << "Hole Area Reduced By: " << (initialHoleArea - finalHoleAreaCount) << std::endl;
+			analysisReport << "Hole Area Reduced By: " << (initialHoleArea - finalHoleAreaCount) << std::endl;
 		}
 		else
 		{
 			analysisReport << "Failed to fill holes in the mesh." << std::endl;
 		}
 	}
-	//Step 6: removeBoundaryFaces
-	if (mesh.removeBoundaryFaces(3))
+	//Step 7: removeBoundaryFaces
+	int layers = 3;
+	if (mesh.removeBoundaryFaces(layers))
 	{
-		analysisReport << "Boundary Faces is succesfully removed from the mesh" << std::endl;
+		analysisReport << "Boundary Faces is succesfully removed from the mesh, using " << layers << " Layers" << std::endl;
 	}
 	else
 	{
@@ -573,7 +702,7 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 	}
 	
 
-	//Step 7: Apply textures
+	//Step 8: Apply textures
 	if (mesh.applyTexture())
 	{
 		analysisReport << "Texture is succesfully applied" << std::endl;
@@ -583,7 +712,9 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 		analysisReport << "Failed to apply Texture for the mesh." << std::endl;
 	}
 
-	//2.7: Final analysis
+	
+
+	//Step 9: Final analysis
 	int finalVertexCount = mesh.vertexCount();
 	int finalTriangleCount = mesh.triangleCount();
 	bool finalIsManifold = mesh.isManifold();
@@ -594,13 +725,63 @@ void MainWindow::postRefineMesh(RecFusion::Mesh& mesh)
 	analysisReport << "Vertices: " << finalVertexCount << std::endl;
 	analysisReport << "Triangles: " << finalTriangleCount << std::endl;
 	analysisReport << "Is manifold: " << (finalIsManifold ? "Yes" : "No") << std::endl;
-	analysisReport << "Boundary Faces removed?: " << (finalTextureIsApplied ? "Yes" : "No") << std::endl;
-	analysisReport << "Is texture applied: " << (finalTextureIsApplied ? "Yes" : "No") << std::endl;
+	//analysisReport << "Boundary Faces removed?: " << (finalTextureIsApplied ? "Yes" : "No") << std::endl;
+	//analysisReport << "Is texture applied: " << (finalTextureIsApplied ? "Yes" : "No") << std::endl;
 
 	// Step 2.7: Display the analysis report
 	QMessageBox::information(this, "Mesh Post-Refinement Analysis", QString::fromStdString(analysisReport.str()));
 }
 
+std::vector<RecFusion::Vec3> MainWindow::GetKeyPoints(const RecFusion::Mesh& mesh)
+{
+	try {
+		std::vector<RecFusion::Vec3> key_points(5, RecFusion::Vec3(0, 0, 0));
+		RecFusion::Vec3 center = mesh.center();
+		RecFusion::Vec3 extent = mesh.extent();
+		RecFusion::Vec3 corner_pxpz((center[0] + extent[0] / 2), 0, (center[2] + extent[2] / 2));
+		RecFusion::Vec3 corner_mxpz((center[0] - extent[0] / 2), 0, (center[2] + extent[2] / 2));
+		RecFusion::Vec3 corner_mxmz((center[0] - extent[0] / 2), 0, (center[2] - extent[2] / 2));
+		RecFusion::Vec3 corner_pxmz((center[0] + extent[0] / 2), 0, (center[2] - extent[2] / 2));
+
+		const double tolerance = 1.0;
+
+		for (int i = 0; i < mesh.vertexCount(); ++i)
+		{
+			RecFusion::Mesh::Coordinate vertex = mesh.vertex(i);
+			RecFusion::Vec3 vertex_vector(vertex.x, vertex.y, vertex.z);
+
+			if (vertex_vector[0] >= corner_pxpz[0] - tolerance && vertex_vector[2] >= corner_pxpz[2] - tolerance) {
+				if (key_points[0][1] == 0 || vertex_vector[1] < key_points[0][1]) {
+					key_points[0] = vertex_vector;
+				}
+			}
+			if (vertex_vector[0] <= corner_mxpz[0] + tolerance && vertex_vector[2] >= corner_mxpz[2] - tolerance) {
+				if (key_points[1][1] == 0 || vertex_vector[1] < key_points[1][1]) {
+					key_points[1] = vertex_vector;
+				}
+			}
+			if (vertex_vector[0] <= corner_mxmz[0] + tolerance && vertex_vector[2] <= corner_mxmz[2] + tolerance) {
+				if (key_points[2][1] == 0 || vertex_vector[1] < key_points[2][1]) {
+					key_points[2] = vertex_vector;
+				}
+			}
+			if (vertex_vector[0] >= corner_pxmz[0] - tolerance && vertex_vector[2] <= corner_pxmz[2] + tolerance) {
+				if (key_points[3][1] == 0 || vertex_vector[1] < key_points[3][1]) {
+					key_points[3] = vertex_vector;
+				}
+			}
+			if (key_points[4][1] < vertex_vector[1]) {
+				key_points[4] = vertex_vector;
+			}
+		}
+
+		return key_points;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Error in GetKeyPoints: " << e.what() << std::endl;
+		throw;
+	}
+}
 void MainWindow::stopReconstruction()
 {
 	// Stop reconstruction
@@ -808,16 +989,7 @@ void MainWindow::processFrames()
 				m_recLabel[i]->setPixmap(QPixmap::fromImage(image).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));//CHECK THIS
 			}
 		}
-		//else if (!m_reconstruct && m_refine)
-		//{ 
-		//	QImage refinedImage(m_sceneImg[i]->data(), dw, dh, QImage::Format_RGBA8888);
-		//	m_refinedLabel[i]->setPixmap(QPixmap::fromImage(refinedImage).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
-		//	// Convert RecFusion::ColorImage to QImage
-		//	QImage qImage(renderedImage[i].data(), width, height, QImage::Format_RGBA8888);
-
-		//	// Display the rendered mesh in the third lane
-		//	m_refinedLabel->setPixmap(QPixmap::fromImage(qImage));
-		//}
+		
 		else if (m_calibrate)
 		{
 			// Save calibration frame
@@ -834,3 +1006,13 @@ void MainWindow::processFrames()
 	// Update GUI
 	update();
 }
+//else if (!m_reconstruct && m_refine)
+		//{ 
+		//	QImage refinedImage(m_sceneImg[i]->data(), dw, dh, QImage::Format_RGBA8888);
+		//	m_refinedLabel[i]->setPixmap(QPixmap::fromImage(refinedImage).scaled(dw, dh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+		//	// Convert RecFusion::ColorImage to QImage
+		//	QImage qImage(renderedImage[i].data(), width, height, QImage::Format_RGBA8888);
+
+		//	// Display the rendered mesh in the third lane
+		//	m_refinedLabel->setPixmap(QPixmap::fromImage(qImage));
+		//}
